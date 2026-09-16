@@ -1,0 +1,23 @@
+{
+  "name": "vault-tec-memory-game",
+  "version": "1.0.0",
+  "description": "Vault-Tec inspired memory card matching game with React, Express, and MongoDB",
+  "scripts": {
+    "client": "cd client && npm run dev",
+    "server": "cd server && npm run dev",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "install-all": "npm install && cd client && npm install && cd ../server && npm install",
+    "build": "cd client && npm run build"
+  },
+  "keywords": [
+    "memory-game",
+    "vault-tec",
+    "react",
+    "express",
+    "mongodb"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}
