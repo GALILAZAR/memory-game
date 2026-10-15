@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 
 /**
  * Generate a JWT token for a user.
- * @param {string} id - The user's MongoDB _id
+ * @param {number} id - The user's PostgreSQL id
  * @returns {string} Signed JWT token (expires in 30 days)
  */
 const generateToken = (id) => {

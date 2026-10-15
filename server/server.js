@@ -1,17 +1,16 @@
-import express from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
-import connectDB from './config/db.js';
-import authRoutes from './routes/authRoutes.js';
-import gameRoutes from './routes/gameRoutes.js';
-import leaderboardRoutes from './routes/leaderboardRoutes.js';
-import { notFound, errorHandler } from './middleware/errorMiddleware.js';
 
-// Load environment variables from .env file
+// Load environment variables BEFORE any other module imports
 dotenv.config();
 
-// Connect to MongoDB
-connectDB();
+// Dynamic imports after env is loaded
+const { default: express } = await import('express');
+const { default: cors } = await import('cors');
+const { default: connectDB } = await import('./config/db.js');
+const { default: authRoutes } = await import('./routes/authRoutes.js');
+const { default: gameRoutes } = await import('./routes/gameRoutes.js');
+const { default: leaderboardRoutes } = await import('./routes/leaderboardRoutes.js');
+const { notFound, errorHandler } = await import('./middleware/errorMiddleware.js');
 
 const app = express();
 
@@ -53,6 +52,10 @@ app.use(errorHandler);
 
 // ---- Start Server ----
 const PORT = process.env.PORT || 5000;
+
+// Connect to PostgreSQL & sync models before accepting requests
+await connectDB();
+
 app.listen(PORT, () => {
   console.log(`\n⚡ Vault-Tec Server running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);

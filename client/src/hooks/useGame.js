@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { CARD_TYPES, DIFFICULTIES, GAME_STATUS } from '../data/cards';
 import useTimer from './useTimer';
+import scoreService from '../services/scoreService';
 
 /**
  * Fisher-Yates shuffle algorithm.
@@ -174,6 +175,11 @@ const playSound = (audioCtx, type) => {
  *
  * Manages the entire game state: deck, flipping, matching,
  * scoring, difficulty, pause/resume, reveal, demo mode.
+ *
+ * Now integrates with the PostgreSQL backend:
+ * - Creates a game record when the first card is flipped
+ * - Syncs progress (moves, pairs, time) to the backend periodically
+ * - Completes the game via the backend API on win/game-over
  */
 const useGame = () => {
   // ---- Game State ----
@@ -197,6 +203,15 @@ const useGame = () => {
   const isCheckingRef = useRef(false);
   const audioCtxRef = useRef(null);
   const demoTimeoutRef = useRef(null);
+  // Ref to track the latest gameId for async operations
+  const gameIdRef = useRef(null);
+  // Ref to debounce backend sync
+  const syncTimeoutRef = useRef(null);
+
+  // Keep gameIdRef in sync with state
+  useEffect(() => {
+    gameIdRef.current = gameId;
+  }, [gameId]);
 
   // Initialize audio context lazily (requires user interaction)
   const getAudioCtx = useCallback(() => {
@@ -227,6 +242,75 @@ const useGame = () => {
     gameStatus === GAME_STATUS.READY;
 
   /**
+   * Create a game record in the PostgreSQL backend.
+   * Called when the game starts (first card flip).
+   * Runs in the background — doesn't block gameplay.
+   */
+  const createBackendGame = useCallback(async (diff) => {
+    try {
+      const result = await scoreService.createGame({ difficulty: diff });
+      if (result.success && result.game) {
+        const newId = result.game.id;
+        setGameId(newId);
+        gameIdRef.current = newId;
+        console.log('Game created in PostgreSQL, id:', newId);
+      }
+    } catch (err) {
+      console.warn('Failed to create game in backend (playing offline):', err.message);
+    }
+  }, []);
+
+  /**
+   * Sync current game progress to the backend.
+   * Debounced to avoid flooding the server on rapid moves.
+   */
+  const syncGameProgress = useCallback((currentMoves, currentTime, currentPairsFound) => {
+    // Clear any pending sync
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+
+    syncTimeoutRef.current = setTimeout(async () => {
+      const currentGameId = gameIdRef.current;
+      if (!currentGameId) return;
+
+      try {
+        await scoreService.updateGame(currentGameId, {
+          moves: currentMoves,
+          time: currentTime,
+          pairsFound: currentPairsFound,
+        });
+      } catch (err) {
+        // Don't block gameplay if sync fails
+        console.warn('Failed to sync game progress:', err.message);
+      }
+    }, 1000); // Debounce by 1 second
+  }, []);
+
+  /**
+   * Complete the game on the backend (win or game_over).
+   * Creates a Score record for authenticated users who won.
+   */
+  const completeBackendGame = useCallback(async (finalMoves, finalTime, finalPairsFound, finalRating) => {
+    const currentGameId = gameIdRef.current;
+    if (!currentGameId) return null;
+
+    try {
+      const result = await scoreService.completeGame(currentGameId, {
+        moves: finalMoves,
+        time: finalTime,
+        pairsFound: finalPairsFound,
+        rating: finalRating,
+      });
+      console.log('Game completed in PostgreSQL:', result);
+      return result;
+    } catch (err) {
+      console.warn('Failed to complete game in backend:', err.message);
+      return null;
+    }
+  }, []);
+
+  /**
    * Start a new game with the current difficulty.
    */
   const restartGame = useCallback(
@@ -240,6 +324,12 @@ const useGame = () => {
       }
       setIsDemo(false);
 
+      // Cancel any pending backend sync
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+      }
+
       // Reset all state
       setCards(generateDeck(diff));
       setFlippedCards([]);
@@ -249,6 +339,7 @@ const useGame = () => {
       setRating(3);
       setRevealsLeft(3);
       setGameId(null);
+      gameIdRef.current = null;
       isCheckingRef.current = false;
       timer.reset();
 
@@ -272,6 +363,7 @@ const useGame = () => {
   /**
    * Flip a card.
    * Handles all click prevention, matching logic, and game state transitions.
+   * Now also syncs game state to the PostgreSQL backend.
    */
   const flipCard = useCallback(
     (cardId) => {
@@ -300,6 +392,8 @@ const useGame = () => {
       if (gameStatus === GAME_STATUS.READY) {
         setGameStatus(GAME_STATUS.PLAYING);
         timer.start();
+        // Create game in backend when gameplay starts
+        createBackendGame(difficulty);
       }
 
       sound('flip');
@@ -310,7 +404,8 @@ const useGame = () => {
       // If this is the second card, check for a match
       if (newFlipped.length === 2) {
         isCheckingRef.current = true;
-        setMoves((prev) => prev + 1);
+        const currentMoves = moves + 1;
+        setMoves(currentMoves);
 
         const [firstId, secondId] = newFlipped;
         const firstCard = cards.find((c) => c.id === firstId);
@@ -320,13 +415,16 @@ const useGame = () => {
           // ---- MATCH ----
           sound('match');
           const newMatched = [...matchedCards, firstId, secondId];
+          const newPairsFound = newMatched.length / 2;
           setMatchedCards(newMatched);
           setFlippedCards([]);
           isCheckingRef.current = false;
 
+          // Sync progress to backend
+          syncGameProgress(currentMoves, timer.time, newPairsFound);
+
           // Check for win
           if (newMatched.length === cards.length) {
-            const currentMoves = moves + 1;
             const finalRating = calculateRating(
               currentMoves,
               timer.time,
@@ -336,10 +434,17 @@ const useGame = () => {
             setGameStatus(GAME_STATUS.WON);
             timer.stop();
             sound('win');
+
+            // Complete the game on the backend
+            completeBackendGame(currentMoves, timer.time, newPairsFound, finalRating);
           }
         } else {
           // ---- NO MATCH ----
           sound('mismatch');
+
+          // Sync progress to backend (moves increased even on mismatch)
+          syncGameProgress(currentMoves, timer.time, matchedCards.length / 2);
+
           setTimeout(() => {
             setFlippedCards([]);
             isCheckingRef.current = false;
@@ -357,6 +462,9 @@ const useGame = () => {
       isDemo,
       timer,
       sound,
+      createBackendGame,
+      syncGameProgress,
+      completeBackendGame,
     ]
   );
 
@@ -372,8 +480,12 @@ const useGame = () => {
       setGameStatus(GAME_STATUS.GAME_OVER);
       timer.stop();
       sound('gameover');
+
+      // Complete game as game_over on the backend
+      const finalRating = calculateRating(moves, timer.time, difficulty);
+      completeBackendGame(moves, timer.time, matchedCards.length / 2, finalRating);
     }
-  }, [moves, showMoveLimit, moveLimit, gameStatus, timer, sound]);
+  }, [moves, showMoveLimit, moveLimit, gameStatus, timer, sound, difficulty, matchedCards, completeBackendGame]);
 
   /**
    * Update rating in real-time as moves increase.
@@ -532,11 +644,14 @@ const useGame = () => {
     }, delay + 1000);
   }, [isDemo, difficulty, timer, restartGame, sound]);
 
-  // Cleanup demo timeouts on unmount
+  // Cleanup demo timeouts and sync timeouts on unmount
   useEffect(() => {
     return () => {
       if (demoTimeoutRef.current) {
         clearTimeout(demoTimeoutRef.current);
+      }
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
       }
     };
   }, []);

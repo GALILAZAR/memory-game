@@ -1,50 +1,56 @@
-import mongoose from 'mongoose';
+import { DataTypes } from 'sequelize';
+import { getSequelize } from '../config/db.js';
 import bcrypt from 'bcryptjs';
 
-/**
- * User Schema
- * Stores user credentials for authentication.
- * Passwords are automatically hashed before saving.
- */
-const userSchema = new mongoose.Schema(
-  {
-    name: {
-      type: String,
-      required: [true, 'Please add a name'],
-      trim: true,
-      maxlength: [50, 'Name cannot exceed 50 characters'],
-    },
-    email: {
-      type: String,
-      required: [true, 'Please add an email'],
-      unique: true,
-      lowercase: true,
-      trim: true,
-      match: [/^\S+@\S+\.\S+$/, 'Please add a valid email'],
-    },
-    password: {
-      type: String,
-      required: [true, 'Please add a password'],
-      minlength: [6, 'Password must be at least 6 characters'],
-      select: false, // Never return password in queries by default
+const sequelize = getSequelize();
+
+const User = sequelize.define('User', {
+  id: {
+    type: DataTypes.INTEGER,
+    autoIncrement: true,
+    primaryKey: true,
+  },
+  name: {
+    type: DataTypes.STRING(50),
+    allowNull: false,
+    validate: {
+      notEmpty: { msg: 'Please add a name' },
+      len: { args: [1, 50], msg: 'Name cannot exceed 50 characters' },
     },
   },
-  {
-    timestamps: true, // Adds createdAt and updatedAt
-  }
-);
+  email: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    unique: true,
+    validate: {
+      isEmail: { msg: 'Please add a valid email' },
+    },
+    set(value) {
+      this.setDataValue('email', value.toLowerCase().trim());
+    },
+  },
+  password: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+    validate: {
+      len: { args: [6, 255], msg: 'Password must be at least 6 characters' },
+    },
+  },
+});
 
 /**
- * Pre-save hook: Hash password before saving to database.
- * Only hashes if the password field has been modified (not on every save).
+ * Hash password before creating or updating a user.
  */
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
-    return next();
-  }
+User.beforeCreate(async (user) => {
   const salt = await bcrypt.genSalt(12);
-  this.password = await bcrypt.hash(this.password, salt);
-  next();
+  user.password = await bcrypt.hash(user.password, salt);
+});
+
+User.beforeUpdate(async (user) => {
+  if (user.changed('password')) {
+    const salt = await bcrypt.genSalt(12);
+    user.password = await bcrypt.hash(user.password, salt);
+  }
 });
 
 /**
@@ -52,9 +58,17 @@ userSchema.pre('save', async function (next) {
  * @param {string} enteredPassword - The plain-text password to check
  * @returns {boolean} True if passwords match
  */
-userSchema.methods.matchPassword = async function (enteredPassword) {
+User.prototype.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
 
-const User = mongoose.model('User', userSchema);
+/**
+ * Return user data without the password field.
+ */
+User.prototype.toSafeJSON = function () {
+  const values = { ...this.get() };
+  delete values.password;
+  return values;
+};
+
 export default User;

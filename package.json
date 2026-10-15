@@ -1,7 +1,7 @@
 {
   "name": "vault-tec-memory-game",
   "version": "1.0.0",
-  "description": "Vault-Tec inspired memory card matching game with React, Express, and MongoDB",
+  "description": "Vault-Tec inspired memory card matching game with React, Express, and PostgreSQL",
   "scripts": {
     "client": "cd client && npm run dev",
     "server": "cd server && npm run dev",
@@ -14,7 +14,7 @@
     "vault-tec",
     "react",
     "express",
-    "mongodb"
+    "postgresql"
   ],
   "license": "MIT",
   "devDependencies": {

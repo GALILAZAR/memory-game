@@ -1,14 +1,12 @@
 import Game from '../models/Game.js';
 import Score from '../models/Score.js';
 
-// Map difficulty to expected total pairs
 const DIFFICULTY_PAIRS = {
   easy: 8,
   medium: 10,
   hard: 18,
 };
 
-// Move limits per difficulty (for validation)
 const MOVE_LIMITS = {
   easy: 30,
   medium: 40,
@@ -32,13 +30,14 @@ export const createGame = async (req, res) => {
     }
 
     const game = await Game.create({
-      user: req.user ? req.user._id : null,
+      user_id: req.user ? req.user.id : null,
       difficulty,
-      totalPairs: DIFFICULTY_PAIRS[difficulty],
+      total_pairs: DIFFICULTY_PAIRS[difficulty],
     });
 
     res.status(201).json({ success: true, game });
   } catch (error) {
+    console.error('createGame error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to create game',
@@ -53,7 +52,7 @@ export const createGame = async (req, res) => {
  */
 export const getGame = async (req, res) => {
   try {
-    const game = await Game.findById(req.params.id);
+    const game = await Game.findByPk(req.params.id);
 
     if (!game) {
       return res.status(404).json({
@@ -64,6 +63,7 @@ export const getGame = async (req, res) => {
 
     res.json({ success: true, game });
   } catch (error) {
+    console.error('getGame error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch game',
@@ -78,7 +78,7 @@ export const getGame = async (req, res) => {
  */
 export const updateGame = async (req, res) => {
   try {
-    const game = await Game.findById(req.params.id);
+    const game = await Game.findByPk(req.params.id);
 
     if (!game) {
       return res.status(404).json({
@@ -87,7 +87,6 @@ export const updateGame = async (req, res) => {
       });
     }
 
-    // Only allow updating active games
     if (game.status !== 'playing') {
       return res.status(400).json({
         success: false,
@@ -99,13 +98,14 @@ export const updateGame = async (req, res) => {
 
     if (moves !== undefined) game.moves = moves;
     if (time !== undefined) game.time = time;
-    if (pairsFound !== undefined) game.pairsFound = pairsFound;
+    if (pairsFound !== undefined) game.pairs_found = pairsFound;
     if (status !== undefined) game.status = status;
 
     await game.save();
 
     res.json({ success: true, game });
   } catch (error) {
+    console.error('updateGame error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to update game',
@@ -120,7 +120,7 @@ export const updateGame = async (req, res) => {
  */
 export const completeGame = async (req, res) => {
   try {
-    const game = await Game.findById(req.params.id);
+    const game = await Game.findByPk(req.params.id);
 
     if (!game) {
       return res.status(404).json({
@@ -138,52 +138,61 @@ export const completeGame = async (req, res) => {
 
     const { moves, time, pairsFound, rating } = req.body;
 
-    // --- Server-side validation ---
-    // Validate that moves is reasonable (at least as many as pairs found)
-    if (!moves || moves < pairsFound) {
+    // Validate moves — must be a number >= 0 and at least as many as pairsFound
+    if (moves == null || typeof moves !== 'number' || moves < 0) {
       return res.status(400).json({
         success: false,
         message: 'Invalid move count',
       });
     }
 
-    // Validate pairs found doesn't exceed total
-    if (pairsFound > game.totalPairs) {
+    if (pairsFound == null || typeof pairsFound !== 'number' || pairsFound < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid pairs found count',
+      });
+    }
+
+    if (moves < pairsFound) {
+      return res.status(400).json({
+        success: false,
+        message: 'Move count cannot be less than pairs found',
+      });
+    }
+
+    if (pairsFound > game.total_pairs) {
       return res.status(400).json({
         success: false,
         message: 'Pairs found exceeds total pairs',
       });
     }
 
-    // Validate time is positive
-    if (time < 0) {
+    if (time == null || typeof time !== 'number' || time < 0) {
       return res.status(400).json({
         success: false,
         message: 'Invalid time',
       });
     }
 
-    // Validate rating
-    if (!rating || rating < 1 || rating > 3) {
+    if (rating == null || typeof rating !== 'number' || rating < 1 || rating > 3) {
       return res.status(400).json({
         success: false,
         message: 'Rating must be between 1 and 3',
       });
     }
 
-    // Update game record
     game.moves = moves;
     game.time = time;
-    game.pairsFound = pairsFound;
-    game.status = pairsFound === game.totalPairs ? 'won' : 'game_over';
-    game.completedAt = new Date();
+    game.pairs_found = pairsFound;
+    game.status = pairsFound === game.total_pairs ? 'won' : 'game_over';
+    game.completed_at = new Date();
     await game.save();
 
-    // Save score if user is authenticated and game was won
+    // Save score if user is logged in and game is won
     let score = null;
     if (req.user && game.status === 'won') {
       score = await Score.create({
-        user: req.user._id,
+        user_id: req.user.id,
         difficulty: game.difficulty,
         moves,
         time,
@@ -199,6 +208,7 @@ export const completeGame = async (req, res) => {
       score,
     });
   } catch (error) {
+    console.error('completeGame error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to complete game',

@@ -8,20 +8,19 @@ import User from '../models/User.js';
 export const protect = async (req, res, next) => {
   let token;
 
-  // Check for Bearer token in Authorization header
   if (
     req.headers.authorization &&
     req.headers.authorization.startsWith('Bearer')
   ) {
     try {
-      // Extract token from "Bearer <token>"
       token = req.headers.authorization.split(' ')[1];
 
-      // Verify token and decode payload
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-      // Attach user to request (exclude password)
-      req.user = await User.findById(decoded.id).select('-password');
+      // Fetch user from PostgreSQL, excluding the password field
+      req.user = await User.findByPk(decoded.id, {
+        attributes: { exclude: ['password'] },
+      });
 
       if (!req.user) {
         return res.status(401).json({
@@ -61,7 +60,9 @@ export const optionalAuth = async (req, res, next) => {
     try {
       token = req.headers.authorization.split(' ')[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id).select('-password');
+      req.user = await User.findByPk(decoded.id, {
+        attributes: { exclude: ['password'] },
+      });
     } catch (error) {
       // Token invalid — continue as guest
       req.user = null;

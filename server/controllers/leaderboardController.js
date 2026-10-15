@@ -1,4 +1,5 @@
 import Score from '../models/Score.js';
+import User from '../models/User.js';
 
 /**
  * @desc    Get leaderboard scores
@@ -16,15 +17,27 @@ export const getLeaderboard = async (req, res) => {
     const { difficulty } = req.query;
 
     // Build query filter
-    const filter = { completed: true };
+    const where = { completed: true };
     if (difficulty && ['easy', 'medium', 'hard'].includes(difficulty)) {
-      filter.difficulty = difficulty;
+      where.difficulty = difficulty;
     }
 
-    const scores = await Score.find(filter)
-      .populate('user', 'name') // Only include user's name
-      .sort({ pairs: -1, moves: 1, time: 1 }) // Rank: most pairs, fewest moves, least time
-      .limit(50); // Cap at top 50
+    const scores = await Score.findAll({
+      where,
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['name'],
+        },
+      ],
+      order: [
+        ['pairs', 'DESC'],
+        ['moves', 'ASC'],
+        ['time', 'ASC'],
+      ],
+      limit: 50,
+    });
 
     res.json({
       success: true,
@@ -40,6 +53,7 @@ export const getLeaderboard = async (req, res) => {
       })),
     });
   } catch (error) {
+    console.error('getLeaderboard error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch leaderboard',
@@ -89,7 +103,7 @@ export const submitScore = async (req, res) => {
     }
 
     const score = await Score.create({
-      user: req.user._id,
+      user_id: req.user.id,
       difficulty,
       moves,
       time,
@@ -100,6 +114,7 @@ export const submitScore = async (req, res) => {
 
     res.status(201).json({ success: true, score });
   } catch (error) {
+    console.error('submitScore error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to submit score',
@@ -108,20 +123,49 @@ export const submitScore = async (req, res) => {
 };
 
 /**
- * @desc    Get current user's scores
+ * @desc    Get current user's scores (including best score)
  * @route   GET /api/scores/me
  * @access  Private
  */
 export const getMyScores = async (req, res) => {
   try {
-    const scores = await Score.find({ user: req.user._id })
-      .sort({ createdAt: -1 })
-      .limit(20);
+    const scores = await Score.findAll({
+      where: { user_id: req.user.id },
+      order: [['created_at', 'DESC']],
+      limit: 20,
+    });
+
+    // Calculate best (highest) score per difficulty
+    // "Best" = most pairs, fewest moves, least time
+    const bestScores = await Score.findAll({
+      where: { user_id: req.user.id, completed: true },
+      order: [
+        ['pairs', 'DESC'],
+        ['moves', 'ASC'],
+        ['time', 'ASC'],
+      ],
+      attributes: ['difficulty', 'moves', 'time', 'pairs', 'rating', 'created_at'],
+    });
+
+    // Group best by difficulty — first entry per difficulty is the best
+    const bestByDifficulty = {};
+    for (const s of bestScores) {
+      if (!bestByDifficulty[s.difficulty]) {
+        bestByDifficulty[s.difficulty] = {
+          difficulty: s.difficulty,
+          moves: s.moves,
+          time: s.time,
+          pairs: s.pairs,
+          rating: s.rating,
+          date: s.createdAt,
+        };
+      }
+    }
 
     res.json({
       success: true,
       scores: scores.map((score) => ({
-        id: score._id,
+        id: score.id,
         difficulty: score.difficulty,
         moves: score.moves,
         time: score.time,
@@ -129,8 +173,10 @@ export const getMyScores = async (req, res) => {
         rating: score.rating,
         date: score.createdAt,
       })),
+      bestScores: bestByDifficulty,
     });
   } catch (error) {
+    console.error('getMyScores error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch scores',

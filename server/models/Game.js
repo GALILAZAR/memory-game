@@ -1,59 +1,63 @@
-import mongoose from 'mongoose';
+import { DataTypes } from 'sequelize';
+import { getSequelize } from '../config/db.js';
 
-/**
- * Game Schema
- * Tracks individual game sessions.
- * Links to a user (optional for guest play).
- */
-const gameSchema = new mongoose.Schema(
-  {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      default: null, // null = guest game
-    },
-    difficulty: {
-      type: String,
-      enum: ['easy', 'medium', 'hard'],
-      required: [true, 'Difficulty is required'],
-    },
-    moves: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    time: {
-      type: Number, // Time in seconds
-      default: 0,
-      min: 0,
-    },
-    pairsFound: {
-      type: Number,
-      default: 0,
-      min: 0,
-    },
-    totalPairs: {
-      type: Number,
-      required: true,
-    },
-    status: {
-      type: String,
-      enum: ['playing', 'won', 'game_over'],
-      default: 'playing',
-    },
-    startedAt: {
-      type: Date,
-      default: Date.now,
-    },
-    completedAt: {
-      type: Date,
-      default: null,
+const sequelize = getSequelize();
+
+const Game = sequelize.define('Game', {
+  id: {
+    type: DataTypes.INTEGER,
+    autoIncrement: true,
+    primaryKey: true,
+  },
+  user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true, // Guests get null
+    references: {
+      model: 'users',
+      key: 'id',
     },
   },
-  {
-    timestamps: true,
-  }
-);
+  difficulty: {
+    type: DataTypes.ENUM('easy', 'medium', 'hard'),
+    allowNull: false,
+    validate: {
+      isIn: {
+        args: [['easy', 'medium', 'hard']],
+        msg: 'Difficulty is required (easy, medium, hard)',
+      },
+    },
+  },
+  moves: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    validate: { min: 0 },
+  },
+  time: {
+    type: DataTypes.INTEGER, // Time in seconds
+    defaultValue: 0,
+    validate: { min: 0 },
+  },
+  pairs_found: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    validate: { min: 0 },
+  },
+  total_pairs: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  status: {
+    type: DataTypes.ENUM('playing', 'won', 'game_over'),
+    defaultValue: 'playing',
+  },
+  started_at: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+  },
+  completed_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+});
 
-const Game = mongoose.model('Game', gameSchema);
 export default Game;
